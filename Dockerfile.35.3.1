@@ -1,0 +1,17 @@
+ARG K3S_VERSION=1.32.2
+
+FROM alpine AS preload
+ARG K3S_VERSION
+RUN apk add skopeo zstd wget
+WORKDIR /tmp
+RUN wget -c https://github.com/k3s-io/k3s/releases/download/v${K3S_VERSION}%2Bk3s1/k3s-airgap-images-arm64.tar.zst
+
+FROM quay.io/kairos/ubuntu:20.04-core-arm64-nvidia-jetson-agx-orin-v3.2.4 AS build
+RUN rm -Rf /lib/modules
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v35.3.1 /lib/modules/. /lib/modules/
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v35.3.1 /boot/. /boot/
+RUN test -f /lib/modules/5.10.104-tegra/kernel/fs/xfs/xfs.ko
+RUN luet install -y system/provider-kairos
+RUN luet install -y "k8s/k3s-$(which-init.sh)@${K3S_VERSION}" utils/edgevpn utils/k9s utils/nerdctl container/kubectl utils/kube-vip
+RUN apt-get update && apt-get install -yqq python2 htop glances iperf && apt-get clean
+COPY --from=preload /tmp/*.tar.zst /var/lib/rancher/k3s/agent/images/
