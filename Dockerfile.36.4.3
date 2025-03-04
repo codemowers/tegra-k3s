@@ -11,6 +11,11 @@ RUN rm -Rf /lib/modules
 COPY --from=docker.io/codemowers/tegra-k3s-modules:v35.3.1 /lib/modules/. /lib/modules/
 COPY --from=docker.io/codemowers/tegra-k3s-modules:v35.3.1 /boot/. /boot/
 RUN test -f /lib/modules/5.10.104-tegra/kernel/fs/xfs/xfs.ko
+RUN ln -sf Image /boot/vmlinuz
+RUN kernel=$(ls /lib/modules | head -n1) && \
+    depmod -a "${kernel}" && \
+    dracut -f "/boot/initrd-${kernel}" "${kernel}" && \
+    ln -sf "initrd-${kernel}" /boot/initrd
 RUN luet install -y system/provider-kairos
 RUN luet install -y "k8s/k3s-$(which-init.sh)@${K3S_VERSION}" utils/edgevpn utils/k9s utils/nerdctl container/kubectl utils/kube-vip
 RUN apt-get update && apt-get install -yqq python2 htop glances iperf && apt-get clean
