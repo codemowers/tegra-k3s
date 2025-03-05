@@ -1,24 +1,35 @@
-ARG K3S_VERSION=1.32.2
+ARG K3S_VERSION=1.31.4
+ARG KUBECTL_VERSION=1.31.0
 
 FROM alpine AS preload
 ARG K3S_VERSION
 RUN apk add skopeo zstd wget
 WORKDIR /tmp
 RUN wget -c https://github.com/k3s-io/k3s/releases/download/v${K3S_VERSION}%2Bk3s1/k3s-airgap-images-arm64.tar.zst
+RUN skopeo copy docker://nvcr.io/nvidia/deepstream-l4t:6.2-base docker-archive:deepstream-l4t.tar
+RUN skopeo copy docker://ghcr.io/metal-stack/csi-driver-lvm:v0.5.2 docker-archive:csi-driver-lvm.tar
+RUN skopeo copy docker://ghcr.io/metal-stack/csi-driver-lvm-provisioner:v0.5.2 docker-archive:csi-driver-lvm-provisioner.tar
+RUN skopeo copy docker://k8s.gcr.io/sig-storage/csi-provisioner:v3.0.0 docker-archive:csi-provisioner.tar
+RUN skopeo copy docker://k8s.gcr.io/sig-storage/csi-resizer:v1.3.0 docker-archive:csi-resizer.tar
+RUN skopeo copy docker://k8s.gcr.io/sig-storage/csi-attacher:v3.3.0 docker-archive:csi-attacher.tar
+RUN skopeo copy docker://k8s.gcr.io/sig-storage/csi-node-driver-registrar:v2.3.0 docker-archive:csi-node-driver-registrar.tar
+RUN zstd *.tar
 
 FROM quay.io/kairos/ubuntu:22.04-core-arm64-nvidia-jetson-agx-orin-v3.3.1 AS build
-RUN rm -Rf /lib/modules /boot/Image
-COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 /lib/modules/. /lib/modules/
-COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 /boot/. /boot/
+ARG K3S_VERSION
+ARG KUBECTL_VERSION
+ARG MODS=/lib/modules/5.15.148-tegra/kernel/
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 ${MODS}/net/netfilter/ipset/*.ko ${MODS}/net/netfilter/ipset/
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 ${MODS}/net/netfilter/xt_nfacct.ko ${MODS}/net/netfilter/
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 ${MODS}/net/sched/em_ipset.ko ${MODS}/net/sched/
+COPY --from=docker.io/codemowers/tegra-k3s-modules:v36.4.3 ${MODS}/fs/xfs/xfs.ko ${MODS}/fs/xfs/
 RUN test -f /lib/modules/5.15.148-tegra/kernel/fs/xfs/xfs.ko
-RUN ln -sf Image /boot/vmlinuz
-RUN kernel=$(ls /lib/modules | head -n1) && \
-    depmod -a "${kernel}" && \
-    dracut -f "/boot/initrd-${kernel}" "${kernel}" && \
-    ln -sf "initrd-${kernel}" /boot/initrd
-RUN luet install -y system/provider-kairos
-RUN luet install -y "k8s/k3s-$(which-init.sh)@${K3S_VERSION}" utils/edgevpn utils/k9s utils/nerdctl container/kubectl utils/kube-vip
+# For luet packages refer to https://packages.kairos.io/
+RUN luet repo update
+RUN luet install -y system/provider-kairos k8s/k3s-$(which-init.sh) utils/edgevpn utils/k9s utils/nerdctl container/kubectl utils/kube-vip
 RUN apt-get update && \
   apt-get purge -yqq linux-image-6.8.0-52-generic linux-modules-6.8.0-52-generic && \
   apt-get install -yqq python2 htop glances iperf && apt-get clean
 COPY --from=preload /tmp/*.tar.zst /var/lib/rancher/k3s/agent/images/
+RUN mkdir /boot/extlinux
+RUN touch /boot/extlinux/extlinux.conf
